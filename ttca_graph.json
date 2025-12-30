@@ -1,0 +1,42 @@
+{
+  "principals": [
+    {
+      "id": "P1",
+      "type": "Principal",
+      "controlled": true
+    },
+    {
+      "id": "P2",
+      "type": "Principal",
+      "controlled": false
+    },
+    {
+      "id": "P3",
+      "type": "Principal",
+      "controlled": false
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "C1",
+      "critical": true
+    }
+  ],
+  "edges": [
+    {
+      "from": "P1",
+      "to": "P2",
+      "type": "CAN_ACT_AS"
+    },
+    {
+      "from": "P2",
+      "to": "P3",
+      "type": "CAN_ACT_AS"
+    },
+    {
+      "from": "P3",
+      "to": "C1",
+      "type": "HAS_CAPABILITY"
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+    "users":[
+        {
+            "id":"user_james",
+            "can_assume_roles":["role_dev"]
+        },
+        {
+            "id":"user_bob",
+            "can_assume_roles":["role_admin"]
+        },
+        {
+            "id":"user_patrice",
+            "can_assume_roles":["role_dev"]
+        }
+    ],
+    "roles":[
+        {
+            "id":"role_dev",
+            "trusted_by": ["user_james", "user_patrice"],
+            "policies":["dev_policy"]
+        },
+        {
+            "id":"role_admin",
+            "trusted_by":["role_dev"],
+            "policies":["admin_policy"]
+        }
+    ],
+    "policies":[
+        {
+            "id":"dev_policy",
+            "critical":false
+        },
+        {
+            "id":"admin_policy",
+            "critical":true
+        }
+    ]
+}

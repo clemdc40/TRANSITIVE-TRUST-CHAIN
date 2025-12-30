@@ -1,0 +1,81 @@
+{
+    "principals": [
+        {
+            "id": "user_james",
+            "type": "Principal",
+            "controlled": true
+        },
+        {
+            "id": "user_bob",
+            "type": "Principal",
+            "controlled": false
+        },
+        {
+            "id": "user_patrice",
+            "type": "Principal",
+            "controlled": false
+        },
+        {
+            "id": "role_dev",
+            "type": "Principal",
+            "controlled": false
+        },
+        {
+            "id": "role_admin",
+            "type": "Principal",
+            "controlled": false
+        }
+    ],
+    "capabilities": [
+        {
+            "id": "dev_policy",
+            "critical": false
+        },
+        {
+            "id": "admin_policy",
+            "critical": true
+        }
+    ],
+    "edges": [
+        {
+            "from": "user_james",
+            "to": "role_dev",
+            "type": "CAN_ACT_AS"
+        },
+        {
+            "from": "user_bob",
+            "to": "role_admin",
+            "type": "CAN_ACT_AS"
+        },
+        {
+            "from": "user_patrice",
+            "to": "role_dev",
+            "type": "CAN_ACT_AS"
+        },
+        {
+            "from": "user_james",
+            "to": "role_dev",
+            "type": "CAN_ACT_AS"
+        },
+        {
+            "from": "user_patrice",
+            "to": "role_dev",
+            "type": "CAN_ACT_AS"
+        },
+        {
+            "from": "role_dev",
+            "to": "role_admin",
+            "type": "CAN_ACT_AS"
+        },
+        {
+            "from": "role_dev",
+            "to": "dev_policy",
+            "type": "HAS_CAPABILITY"
+        },
+        {
+            "from": "role_admin",
+            "to": "admin_policy",
+            "type": "HAS_CAPABILITY"
+        }
+    ]
+}
