@@ -3,12 +3,6 @@
 TTCA is a proof-of-concept tool that detects privilege escalation paths
 caused by transitive trust relationships in modern Cloud IAM systems.
 
-
-# Transitive Trust Chain Abuse (TTCA)
-
-TTCA is a proof-of-concept tool that detects privilege escalation paths
-caused by transitive trust relationships in modern Cloud IAM systems.
-
 ## Problem
 
 Cloud IAM systems rely heavily on trust relationships (e.g. role assumption).
