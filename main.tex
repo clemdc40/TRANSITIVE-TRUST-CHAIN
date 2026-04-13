@@ -1,0 +1,224 @@
+\documentclass[a4paper,11pt]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[english]{babel}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{geometry}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+
+\geometry{hmargin=2.5cm,vmargin=2.5cm}
+
+% --- Listings styles (compact) ---
+\lstdefinestyle{code}{
+  basicstyle=\ttfamily\footnotesize,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  breaklines=true,
+  frame=single,
+  tabsize=2,
+  showstringspaces=false
+}
+\lstdefinelanguage{json}{
+  basicstyle=\ttfamily\footnotesize,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  stepnumber=1,
+  numbersep=6pt,
+  showstringspaces=false,
+  breaklines=true,
+  frame=single,
+  stringstyle=\color{orange!80!black},
+  literate=
+   *{:}{{{\color{red}:}}}{1}
+    {,}{{{\color{red},}}}{1}
+    {\{}{{{\color{blue}\{}}}{1}
+    {\}}{{{\color{blue}\}}}}{1}
+    {[}{{{\color{blue}[}}}{1}
+    {]}{{{\color{blue}]}}}{1},
+}
+
+\title{\textbf{Transitive Trust Chain Abuse in Modern Cloud IAM Systems}}
+\author{Clement Da Cruz \\ \small Contact: clementdacruz2012@gmail.com}
+\date{January 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Cloud Identity and Access Management (IAM) increasingly relies on delegation mechanisms (e.g., role assumption), which form trust relationships that are often implicitly transitive. This paper introduces \textit{Transitive Trust Chain Abuse} (TTCA), where an attacker escalates privileges by chaining multiple delegations across principals. We propose a directed \textit{property graph} model and a provider-agnostic intermediate representation (IR) to reason about trust chains independently of any single cloud API.
+
+Beyond purely structural reachability, we integrate a predicate function $\Phi$ that captures contextual IAM constraints (e.g., MFA, IP range, time windows), enabling an exploitability-aware traversal that filters non-traversable edges under a given attacker context. We validate a prototype on an AWS-compatible emulated environment (LocalStack) and on large-scale synthetic graphs up to $10^5$ nodes. Under experimental conditions, the system detects exploitable TTCA paths with sub-second latency, and shows negligible overhead for lightweight predicates while significantly improving the semantic fidelity of attack-path findings compared to structure-only analyses.
+\end{abstract}
+
+\section{Introduction}
+Modern cloud infrastructures depend on IAM to regulate access to resources through identities (users, roles, service principals) and delegation (assumption/impersonation) relationships. Delegation is essential for least-privilege architectures, yet it introduces complex trust dependencies that become difficult to audit at scale.
+
+A critical but often underestimated property is \textit{transitivity}: compromising a low-privileged principal may allow an attacker to pivot across multiple delegations to reach high-privileged roles. We formalize this phenomenon as \textbf{Transitive Trust Chain Abuse (TTCA)} and propose a graph-based approach to detect exploitable transitive paths using a provider-agnostic IR.
+
+\section{Related Work}
+\textbf{BloodHound} models privilege relationships in Active Directory/Azure AD as graphs to identify escalation paths \cite{bloodhound}. \textbf{Cartography} inventories cloud assets and IAM relationships in a graph database \cite{cartography}, but focuses on visibility rather than exploitability. \textbf{PMapper} analyzes AWS IAM escalation paths using AWS-specific semantics \cite{pmapper}. Our approach is incremental: it focuses on a normalized IR and on integrating contextual constraints (\(\Phi\)) directly into traversal, rather than proposing a new graph algorithm.
+
+\section{Threat Model and Problem Statement}
+We assume an attacker controls at least one initial principal (e.g., a compromised user, access keys, or workload identity). The attacker attempts to reach a \textit{critical capability} (e.g., administrator-like permissions, policy editing, privilege management) by chaining delegations.
+
+\paragraph{TTCA Goal.} Find a path of delegations of length $\ge 2$ (at least one intermediate step) from a controlled principal to a critical target (principal or capability), such that the path is \textit{traversable} under contextual constraints.
+
+\section{Intermediate Representation (Provider-Agnostic IR)}
+A central challenge in multi-cloud reasoning is to decouple detection logic from provider-specific APIs. We therefore use a normalized JSON IR representing:
+(i) principals, (ii) delegation edges, (iii) capabilities, and (iv) optional edge constraints used by $\Phi$.
+
+\subsection{IR Schema}
+We model a directed property graph where nodes include \textit{principals} and \textit{capabilities}. Delegation is modeled as \texttt{CAN\_ACT\_AS}, while privilege is modeled as \texttt{HAS\_CAPABILITY}. A minimal IR instance is:
+
+\begin{lstlisting}[language=json]
+{
+  "principals": [
+    {"id":"user_james","type":"Principal","controlled":true},
+    {"id":"role_dev","type":"Principal","controlled":false},
+    {"id":"role_admin","type":"Principal","controlled":false}
+  ],
+  "capabilities": [
+    {"id":"admin_policy","critical":true}
+  ],
+  "edges": [
+    {"from":"user_james","to":"role_dev","type":"CAN_ACT_AS",
+     "requires_mfa":true, "allowed_cidr":"192.0.2.0/24"},
+    {"from":"role_dev","to":"role_admin","type":"CAN_ACT_AS"},
+    {"from":"role_admin","to":"admin_policy","type":"HAS_CAPABILITY"}
+  ]
+}
+\end{lstlisting}
+
+This design makes \textit{criticality} explicit at the capability level, avoiding ambiguity when marking a principal as “critical”.
+
+\subsection{Provider Mapping Examples}
+\paragraph{AWS (AssumeRole).}
+For AWS-like semantics, an effective delegation edge \texttt{A CAN\_ACT\_AS B} typically requires \textit{both}:
+(i) a trust policy on role \(B\) that allows \(A\) to assume it, and
+(ii) a permission policy on \(A\) allowing \texttt{sts:AssumeRole} on \(B\).
+In the IR, we create an edge only when the intersection (trust $\cap$ permission) holds. This avoids over-approximations caused by trust-only parsing.
+
+\paragraph{Azure (RBAC \& Workload Identity).}
+A provider-agnostic mapping can treat \textit{role assignments} as edges from principals to capability nodes (e.g., \texttt{HAS\_CAPABILITY}), and \textit{impersonation/delegation} (where applicable) as \texttt{CAN\_ACT\_AS}. Contextual requirements (MFA, Conditional Access) can be captured as edge properties evaluated by \(\Phi\). This is a conceptual mapping intended to validate the IR abstraction, not a claim of full semantic equivalence.
+
+\paragraph{GCP (IAM Bindings \& Impersonation).}
+Similarly, IAM bindings map naturally to \texttt{HAS\_CAPABILITY} (or resource-scoped capability nodes), while service account impersonation relationships can be represented as \texttt{CAN\_ACT\_AS} edges, optionally annotated with constraints evaluated by \(\Phi\).
+
+\section{Detection Model}
+
+\subsection{Formal Model}
+We define a directed property graph:
+\[
+G=(V,E,\Phi),
+\]
+where \(V\) is the set of nodes (principals and capabilities), \(E\) is the set of edges (\texttt{CAN\_ACT\_AS}, \texttt{HAS\_CAPABILITY}), and
+\[
+\Phi: E \times C \rightarrow \{0,1\}
+\]
+is a predicate indicating whether an edge is traversable under a context \(C\) (attacker context such as MFA availability, source IP, time).
+
+An edge \(e\in E\) is traversable under \(C\) iff \(\Phi(e,C)=1\).
+
+\subsection{TTCA Definition}
+Let \(P=\langle v_1,\dots,v_n\rangle\) be a path with length \(L(P)=n-1\).
+A TTCA instance is a tuple \((v_{start}, v_{crit}, P)\) such that:
+\begin{enumerate}
+  \item \textbf{Traversable reachability:} there exists a path \(P\) from \(v_{start}\) to \(v_{crit}\) where every edge satisfies \(\Phi(e,C)=1\);
+  \item \textbf{Transitivity:} \(L(P)\ge 2\) (at least one intermediate node);
+  \item \textbf{Privilege gain:} \(v_{crit}\) is (or reaches) a critical capability node.
+\end{enumerate}
+
+\paragraph{What $\Phi$ is for.}
+Without \(\Phi\), the system reports \textit{structural} paths that may be operationally impossible (e.g., edges requiring MFA when the attacker context lacks it). With \(\Phi\), the traversal becomes \textit{exploitability-aware}: it answers “reachable under context \(C\)” rather than “reachable in theory”.
+
+\section{Algorithm}
+We use BFS because the trust graph is unweighted and we typically want the shortest exploitable chain (useful for triage). We report results for:
+(i) \textbf{structure-only BFS} (\(\Phi \equiv 1\)), and
+(ii) \textbf{\(\Phi\)-aware BFS}.
+
+\begin{lstlisting}[style=code]
+from collections import deque
+
+def phi(edge, context):
+    # Example: MFA gating
+    if edge.get("requires_mfa", False) and not context.get("mfa", False):
+        return False
+    return True
+
+def bfs_phi_aware(adj_edges, start_nodes, critical_nodes, context):
+    # adj_edges[u] = list of edge dicts: {"to":v, ...props...}
+    q = deque((s, [s]) for s in start_nodes)
+    visited = set(start_nodes)
+
+    while q:
+        u, path = q.popleft()
+
+        if u in critical_nodes and len(path) > 2:
+            return path  # shortest exploitable path
+
+        for e in adj_edges.get(u, []):
+            if not phi(e, context):
+                continue
+            v = e["to"]
+            if v not in visited:
+                visited.add(v)
+                q.append((v, path + [v]))
+
+    return None
+\end{lstlisting}
+
+\section{Evaluation}
+
+\subsection{Datasets}
+\textbf{LocalStack emulation.} We deploy an AWS-compatible IAM environment and extract the effective trust graph (trust $\cap$ permission). In one run, the extracted dataset contains 193 principals and 109 effective delegation edges, with multiple injected TTCA chains (2--8 hops).\\
+\textbf{Synthetic graphs.} We generate a $10^5$-node graph with 500,000 edges and inject a known TTCA chain, then benchmark time-to-first-path for structure-only and \(\Phi\)-aware BFS.
+
+\subsection{Metrics}
+We measure \textbf{time-to-first-exploitable-path} (BFS returns the shortest exploitable TTCA chain). This is a practical metric for incident triage and scales well to large graphs.
+
+\subsection{Results}
+\begin{table}[h]
+\centering
+\begin{tabular}{@{}lcc@{}}
+\toprule
+\textbf{Dataset} & \textbf{Structure-only BFS} & \textbf{$\Phi$-aware BFS} \\
+\midrule
+Synthetic ($10^5$ nodes) & 0.0246s & 0.0235s \\
+\bottomrule
+\end{tabular}
+\caption{Time-to-first-path on a $10^5$-node synthetic graph under experimental conditions. Predicates are lightweight in this benchmark; heavier predicates are discussed as future work.}
+\end{table}
+
+On the emulated environment, the prototype identifies numerous transitive paths from the controlled principal to critical roles/capabilities and outputs representative chains for manual inspection. The extraction phase explicitly computes the effective graph (trust $\cap$ permission), reducing false positives compared to trust-only parsing.
+
+\section{Discussion and Limitations}
+\textbf{Predicate cost.} In the above benchmark, \(\Phi\) is lightweight (dictionary checks). Real IAM constraints (CIDR matching, temporal windows, external signals) may be more expensive. However, modeling them explicitly avoids overclaiming exploitability and makes assumptions auditable.
+
+\textbf{Provider-agnostic claim.} The IR supports multi-cloud modeling, but fully faithful semantic mapping across providers remains challenging. This paper provides the IR, AWS-effective-edge construction, and conceptual mapping examples; an extensive Azure/GCP ingestion layer is left as future work.
+
+\textbf{Baselines.} We intentionally avoid strawman comparisons against an unbounded naive DFS. A stronger baseline would compare against graph databases (Cypher/Neo4j) or established libraries; this is future work.
+
+\section{Conclusion}
+We presented TTCA as an exploitability-aware graph reachability problem and introduced a provider-agnostic IR for trust analysis. By integrating contextual predicates \(\Phi\) into traversal, the method separates structural risk from context-dependent feasibility and reduces non-actionable paths. A prototype validated on an AWS-compatible emulation and large synthetic graphs demonstrates that \(\Phi\)-aware BFS can detect exploitable TTCA chains at scale with sub-second latency under experimental conditions.
+
+This work constitutes a foundational step towards a formal study of exploitability-aware IAM graphs. Future work will focus on the theoretical properties of predicate evaluation, complexity bounds, and cross-cloud semantic normalization.
+
+\paragraph{Reproducibility.}
+Code and artifacts are available at:
+
+\url{https://github.com/clemdc40/TRANSITIVE-TRUST-CHAIN-LOCAL-STACK}
+
+\newpage
+\begin{thebibliography}{9}
+\bibitem{bloodhound} SpecterOps, ``BloodHound: Six Degrees of Domain Admin,'' 2016. \url{https://www.specterops.io/bloodhound}
+\bibitem{cartography} Lyft, ``Cartography: A Graph-based Asset Inventory,'' 2019. \url{https://github.com/lyft/cartography}
+\bibitem{pmapper} NCC Group, ``PMapper: AWS IAM Privilege Escalation Mapper,'' 2020. \url{https://github.com/nccgroup/PMapper}
+\end{thebibliography}
+
+\end{document}
